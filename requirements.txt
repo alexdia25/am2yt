@@ -1,0 +1,4 @@
+ytmusicapi>=1.12
+rapidfuzz>=3.14
+requests>=2.32
+pytest>=8.0
