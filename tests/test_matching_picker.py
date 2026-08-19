@@ -36,6 +36,103 @@ def asker(*answers):
     return ask
 
 
+def test_no_results_still_lets_the_user_paste_an_id():
+    """A search that finds nothing must not silently skip the track."""
+    decision = resolve(
+        TRACK, searcher([]), ask=asker("p", "05s4dEcAgMI"), show=lambda *_: None
+    )
+    assert decision.candidate.video_id == "05s4dEcAgMI"
+    assert decision.confident is False
+
+
+def test_no_results_can_still_be_skipped():
+    decision = resolve(TRACK, searcher([]), ask=asker("s"), show=lambda *_: None)
+    assert decision.candidate is None
+    assert decision.stop is False
+
+
+def test_no_results_can_still_quit():
+    decision = resolve(TRACK, searcher([]), ask=asker("q"), show=lambda *_: None)
+    assert decision.stop is True
+
+
+def test_p_accepts_a_bare_video_id():
+    decision = resolve(
+        TRACK,
+        searcher([EXACT, DUPLICATE]),
+        ask=asker("p", "05s4dEcAgMI"),
+        show=lambda *_: None,
+    )
+    assert decision.candidate.video_id == "05s4dEcAgMI"
+
+
+def test_a_pasted_candidate_carries_the_track_details():
+    """We know nothing about a pasted video, so label it from the track."""
+    decision = resolve(
+        TRACK, searcher([]), ask=asker("p", "05s4dEcAgMI"), show=lambda *_: None
+    )
+    assert decision.candidate.title == TRACK.title
+    assert decision.candidate.artist == TRACK.artist
+    assert decision.candidate.duration_s is None
+
+
+def test_p_accepts_a_full_watch_url():
+    decision = resolve(
+        TRACK,
+        searcher([]),
+        ask=asker("p", "https://www.youtube.com/watch?v=05s4dEcAgMI&t=30s"),
+        show=lambda *_: None,
+    )
+    assert decision.candidate.video_id == "05s4dEcAgMI"
+
+
+def test_p_accepts_a_youtu_be_link():
+    decision = resolve(
+        TRACK,
+        searcher([]),
+        ask=asker("p", "https://youtu.be/05s4dEcAgMI?si=abc"),
+        show=lambda *_: None,
+    )
+    assert decision.candidate.video_id == "05s4dEcAgMI"
+
+
+def test_p_accepts_a_music_youtube_link():
+    decision = resolve(
+        TRACK,
+        searcher([]),
+        ask=asker("p", "https://music.youtube.com/watch?v=05s4dEcAgMI"),
+        show=lambda *_: None,
+    )
+    assert decision.candidate.video_id == "05s4dEcAgMI"
+
+
+def test_p_rejects_junk_and_reprompts():
+    shown = []
+    decision = resolve(
+        TRACK, searcher([]), ask=asker("p", "not a video", "s"), show=shown.append
+    )
+    assert decision.candidate is None
+    assert any("recognise" in str(line) or "video ID" in str(line) for line in shown)
+
+
+def test_an_empty_paste_reprompts_without_choosing():
+    decision = resolve(
+        TRACK, searcher([EXACT, DUPLICATE]), ask=asker("p", "", "1"), show=lambda *_: None
+    )
+    assert decision.candidate == EXACT
+
+
+def test_the_prompt_mentions_pasting():
+    prompts = []
+
+    def ask(prompt=""):
+        prompts.append(prompt)
+        return "s"
+
+    resolve(TRACK, searcher([EXACT, DUPLICATE]), ask=ask, show=lambda *_: None)
+    assert any("p" in prompt and "aste" in prompt for prompt in prompts)
+
+
 def test_default_query_is_title_then_artist():
     assert default_query(TRACK) == "Man I Need Olivia Dean"
 
@@ -48,13 +145,6 @@ def test_clear_winner_is_taken_without_asking():
     decision = resolve(TRACK, searcher([EXACT, REMIX, COVER]), ask=asker(), show=lambda *_: None)
     assert decision.candidate == EXACT
     assert decision.confident is True
-    assert decision.stop is False
-
-
-def test_no_results_at_all_is_a_skip_without_asking():
-    decision = resolve(TRACK, searcher([]), ask=asker(), show=lambda *_: None)
-    assert decision.candidate is None
-    assert decision.confident is False
     assert decision.stop is False
 
 

@@ -24,8 +24,18 @@ choose whenever the best match is not clearly correct:
 ? Man I Need — Olivia Dean [3:04]
   1. Man I Need — Olivia Dean — The Art of Loving [3:04] (+0s) score 100
   2. Man I Need — Matt Terry — Man I Need [3:05] (+1s) score 64
-  pick 1-2, [s]kip, [m]anual search, [q]uit and save:
+  pick 1-2, [s]kip, [m]anual search, [p]aste a link, [q]uit and save:
 ```
+
+- a number picks that candidate
+- `m` runs a different search
+- `p` takes a video ID or link you found yourself — `05s4dEcAgMI`,
+  `https://www.youtube.com/watch?v=05s4dEcAgMI`, and `https://youtu.be/05s4dEcAgMI`
+  all work
+- `s` skips the track, `q` stops and saves everything answered so far
+
+If a search finds nothing at all you still get this prompt, so `p` and `m` are
+always available.
 
 At the end you get a `<playlist-name>.md` file listing every track and its match,
 plus a playlist URL.

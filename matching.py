@@ -10,6 +10,7 @@ ahead of the runner-up. Everything else goes to the user.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -82,8 +83,19 @@ def _duration_penalty(track: Track, candidate: Candidate) -> float:
 
 SHOW_CANDIDATES = 5
 
-_PROMPT = "  pick 1-{n}, [s]kip, [m]anual search, [q]uit and save: "
-_EMPTY_PROMPT = "  nothing to pick — [m]anual search, [s]kip, [q]uit and save: "
+_PROMPT = "  pick 1-{n}, [s]kip, [m]anual search, [p]aste a link, [q]uit and save: "
+_EMPTY_PROMPT = (
+    "  nothing to pick — [m]anual search, [p]aste a link, [s]kip, [q]uit and save: "
+)
+
+# A paste is either a bare 11-character video ID or a URL we can find one in:
+# watch?v=, music.youtube.com, youtu.be/, /shorts/, /embed/, /live/. Matching is
+# deliberately not a loose substring search -- an unanchored 11-character match
+# would happily pull an "ID" out of arbitrary prose.
+_BARE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_ID_IN_URL = re.compile(
+    r"(?:v=|youtu\.be/|/shorts/|/embed/|/live/)([A-Za-z0-9_-]{11})"
+)
 
 
 @dataclass(frozen=True)
@@ -98,6 +110,33 @@ class Decision:
 def default_query(track: Track) -> str:
     """The search we try first for a track."""
     return f"{track.title} {track.artist}".strip()
+
+
+def video_id(pasted: str) -> str | None:
+    """Pull a video ID out of whatever the user pasted, or None if there isn't one."""
+    pasted = pasted.strip()
+    if not pasted:
+        return None
+    if _BARE_ID.match(pasted):
+        return pasted
+    found = _ID_IN_URL.search(pasted)
+    return found.group(1) if found else None
+
+
+def pasted_candidate(track: Track, video_id_: str) -> Candidate:
+    """A candidate for a video we know nothing about except its ID.
+
+    The user vouched for it, so we label it with the track's own details rather
+    than fetching metadata -- that would need a network round trip to display
+    something the user already knows.
+    """
+    return Candidate(
+        video_id=video_id_,
+        title=track.title,
+        artist=track.artist,
+        album=track.album,
+        duration_s=None,
+    )
 
 
 def resolve(
@@ -115,8 +154,6 @@ def resolve(
     ranked = rank(track, search(default_query(track)))
     if is_confident(ranked):
         return Decision(candidate=ranked[0][0], confident=True)
-    if not ranked:
-        return Decision(candidate=None, confident=False)
 
     while True:
         options = ranked[:SHOW_CANDIDATES]
@@ -130,6 +167,14 @@ def resolve(
             return Decision(candidate=None, confident=False)
         if answer == "q":
             return Decision(candidate=None, confident=False, stop=True)
+        if answer == "p":
+            pasted = ask("  video ID or YouTube link: ")
+            found = video_id(pasted)
+            if found:
+                return Decision(candidate=pasted_candidate(track, found), confident=False)
+            if pasted.strip():
+                show("  Didn't recognise that as a video ID or YouTube link.")
+            continue
         if answer == "m":
             query = ask("  search: ").strip()
             if query:

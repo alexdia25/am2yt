@@ -125,6 +125,24 @@ def test_a_track_with_no_results_is_skipped_but_the_run_succeeds(fetched, paths)
     assert "no match" in text
 
 
+def test_a_pasted_link_reaches_the_playlist_and_the_cache(fetched, paths):
+    """Search finds nothing for track B, so the user supplies the video by hand."""
+    answers = iter(["p", "05s4dEcAgMI"])
+
+    assert (
+        run(
+            paths,
+            search=searcher({"Man I Need Olivia Dean": [MATCH_A]}),
+            ask=lambda *_: next(answers),
+        )
+        == 0
+    )
+    text = read_output(paths[1])
+    assert "2 matched, 0 skipped" in text
+    assert "video_ids=fsGjRf-N71I,05s4dEcAgMI" in text
+    assert cache.load(paths[0])[TRACK_B.apple_id].video_id == "05s4dEcAgMI"
+
+
 def test_a_search_error_skips_that_track_and_keeps_going(fetched, paths):
     def search(query):
         if query == "Man I Need Olivia Dean":

@@ -118,7 +118,11 @@ Each module's contract:
    **and** leads the runner-up by a clear margin. Otherwise the picker prints the
    top 5 — numbered, each with artist, album, duration, and duration delta from the
    Apple track — and reads a choice: a number to pick, `s` to skip, `m` to type a
-   replacement search query, `q` to stop and save progress.
+   replacement search query, `p` to paste a video ID or YouTube link directly, `q` to
+   stop and save progress. A search returning nothing still prompts, because `p` and
+   `m` are exactly what a user needs at that moment; the pasted video is labelled
+   with the Apple track's own title and artist, since fetching its real metadata
+   would cost a network round trip to show what the user already knows.
 5. **Output.** `output.py` writes `<playlist-name>.md` in the current directory: one
    line per track showing the Apple title and artist, the matched YouTube title,
    artist, duration, and `watch?v=` link. Skipped tracks appear in the same file,
