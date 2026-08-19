@@ -132,6 +132,15 @@ Each module's contract:
 6. **Finish.** `am2yt.py` writes the cache, prints the counts (added, skipped, cache
    hits), the URL(s), and the reminder that the playlist is temporary until saved in
    the YouTube UI.
+7. **Correcting a match.** The results file is output only — regenerated every run —
+   so `--set "<title>" <video>` edits the cache instead, matching the title
+   case-insensitively on a substring and accepting a bare ID or any YouTube link.
+   Edits are validated before any is written, so a typo cannot half-update the
+   cache, and an ambiguous title is refused rather than guessed: picking one of two
+   plausible takes silently would hand the user back the version they were trying
+   to replace. The stale `duration_s` is cleared, since it described the old video.
+   With a playlist URL the edit is followed by a normal run so the results file and
+   playlist link are rewritten in one command; without one it edits and exits.
 
 ## CLI
 

@@ -3,6 +3,7 @@
 
 Usage:
     am2yt.py <apple-music-playlist-url> [--open] [--no-cache]
+    am2yt.py --set "<track title>" <video-id-or-link> [--set ...] [<url>]
 
 Every quit path -- a `q` at a prompt, Ctrl-C, a run that matched nothing -- still
 writes the cache and the results file, so no answered prompt is ever wasted.
@@ -14,11 +15,12 @@ import argparse
 import sys
 import webbrowser
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import cache
 from apple import AppleError, fetch_playlist
-from matching import resolve
+from matching import resolve, video_id
 from models import Result
 from output import watch_videos_urls, write_results
 from youtube import make_search
@@ -33,7 +35,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="am2yt",
         description="Turn a public Apple Music playlist into a YouTube playlist.",
     )
-    parser.add_argument("url", help="public Apple Music playlist URL")
+    parser.add_argument(
+        "url", nargs="?", help="public Apple Music playlist URL"
+    )
     parser.add_argument(
         "--open", action="store_true", help="open the playlist in a browser"
     )
@@ -42,12 +46,94 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="re-resolve every track, ignoring previously cached matches",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--set",
+        nargs=2,
+        action="append",
+        metavar=("TITLE", "VIDEO"),
+        help=(
+            "replace the cached video for a track, e.g. "
+            '--set "Pleura" https://youtu.be/kPJm7lYMjJs. Repeatable. '
+            "Give a playlist URL too and the results file is rewritten."
+        ),
+    )
+    args = parser.parse_args(argv)
+    if not args.url and not args.set:
+        parser.error("give a playlist URL, or --set to edit cached matches")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    return run(args.url, use_cache=not args.no_cache, open_browser=args.open)
+    if args.set and not args.url:
+        return set_matches(args.set, cache.DEFAULT_PATH)
+    return run(
+        args.url,
+        use_cache=not args.no_cache,
+        open_browser=args.open,
+        set_pairs=args.set,
+    )
+
+
+def set_matches(
+    pairs: list[list[str]],
+    cache_path: Path | None = None,
+    show: Callable[..., None] = print,
+) -> int:
+    """Point cached tracks at different videos. Returns the process exit code.
+
+    All or nothing: every edit is validated before any is written, so a typo in
+    the third `--set` cannot leave the cache half-updated. Titles are matched
+    case-insensitively on a substring, and an ambiguous title is an error --
+    picking one of two plausible tracks silently would be worse than failing.
+    """
+    cache_path = cache_path if cache_path is not None else cache.DEFAULT_PATH
+    entries = cache.load(cache_path)
+
+    if not entries:
+        show(
+            f"No cached matches in {cache_path}. Run the playlist first, then --set "
+            "to correct what it chose."
+        )
+        return EXIT_FAIL
+
+    edits = []
+    failed = False
+    for title, video in pairs:
+        new_id = video_id(video)
+        if not new_id:
+            show(f"Not a video ID or YouTube link: {video!r}")
+            failed = True
+            continue
+
+        found = [
+            key
+            for key, entry in entries.items()
+            if title.strip().lower() in entry.title.lower()
+        ]
+        if not found:
+            show(f"No cached track matching {title!r}.")
+            failed = True
+        elif len(found) > 1:
+            names = ", ".join(sorted(entries[key].title for key in found))
+            show(f"{title!r} matches several tracks: {names}. Be more specific.")
+            failed = True
+        else:
+            edits.append((found[0], new_id))
+
+    if failed:
+        show("Nothing changed.")
+        return EXIT_FAIL
+
+    for key, new_id in edits:
+        before = entries[key]
+        # The old runtime described the old video, so drop it rather than carry
+        # a duration that is now a lie.
+        entries[key] = replace(before, video_id=new_id, duration_s=None)
+        show(f"{before.title} — {before.artist}: {before.video_id} -> {new_id}")
+
+    cache.save(entries, cache_path)
+    return EXIT_OK
 
 
 def run(
@@ -58,11 +144,17 @@ def run(
     use_cache: bool = True,
     directory: Path | None = None,
     open_browser: bool = False,
+    set_pairs: list[list[str]] | None = None,
     ask: Callable[..., str] = input,
     show: Callable[..., None] = print,
 ) -> int:
     """Resolve a playlist end to end. Returns the process exit code."""
     cache_path = cache_path if cache_path is not None else cache.DEFAULT_PATH
+
+    if set_pairs:
+        code = set_matches(set_pairs, cache_path, show=show)
+        if code != EXIT_OK:
+            return code
 
     try:
         playlist = fetch_playlist(url)

@@ -47,6 +47,37 @@ YouTube to keep it on your account.
 
 - `--open` — open the playlist in your browser when the run finishes
 - `--no-cache` — re-resolve every track instead of reusing cached matches
+- `--set "<title>" <video>` — point a track at a different video (see below)
+
+## Fixing a bad match after the fact
+
+The `.md` file is output only — it's regenerated every run, so editing it changes
+nothing. Use `--set`, which rewrites the cached match:
+
+```bash
+.venv/bin/python am2yt.py --set "Pleura" https://youtu.be/kPJm7lYMjJs
+```
+
+- Titles match case-insensitively on a substring, so `--set "pleura"` works.
+- Takes a bare ID or any YouTube link; `?si=` tracking params are stripped.
+- Repeatable: `--set "Pleura" <id> --set "Rattlesnake" <id>`.
+- Add the playlist URL to rewrite the `.md` and playlist link in the same command:
+  ```bash
+  .venv/bin/python am2yt.py "<playlist-url>" --set "Pleura" https://youtu.be/kPJm7lYMjJs
+  ```
+  Without a URL it just edits the cache and exits.
+
+Edits are all-or-nothing — a typo in the third `--set` means none are written, so
+the cache never ends up half-updated. An ambiguous title is refused rather than
+guessed:
+
+```
+'Pleura' matches several tracks: Pleura, Pleura (Live). Be more specific.
+Nothing changed.
+```
+
+To re-resolve a track from scratch instead (search + prompt again), delete its
+entry from `~/.am2yt/cache.json` and rerun.
 
 ## How it works
 
