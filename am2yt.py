@@ -57,21 +57,73 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Give a playlist URL too and the results file is rewritten."
         ),
     )
+    parser.add_argument(
+        "--forget",
+        action="append",
+        metavar="TITLE_OR_ID",
+        help=(
+            "drop a cached match by track title or Apple track ID, so the next run "
+            "searches for it again. Repeatable."
+        ),
+    )
     args = parser.parse_args(argv)
-    if not args.url and not args.set:
-        parser.error("give a playlist URL, or --set to edit cached matches")
+    if not args.url and not args.set and not args.forget:
+        parser.error(
+            "give a playlist URL, or --set / --forget to edit cached matches"
+        )
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    if args.set and not args.url:
-        return set_matches(args.set, cache.DEFAULT_PATH)
+    if not args.url:
+        if args.forget:
+            code = forget_matches(args.forget, cache.DEFAULT_PATH)
+            if code != EXIT_OK:
+                return code
+        if args.set:
+            return set_matches(args.set, cache.DEFAULT_PATH)
+        return EXIT_OK
     return run(
         args.url,
         use_cache=not args.no_cache,
         open_browser=args.open,
         set_pairs=args.set,
+        forget=args.forget,
+    )
+
+
+def _find(needle: str, entries: dict, show: Callable[..., None]) -> str | None:
+    """The cache key a user's `--set` / `--forget` argument refers to.
+
+    An exact key match wins, so an Apple track ID can never be shadowed by a
+    track whose title happens to be the same digits. Otherwise the needle is a
+    case-insensitive substring of the title. Reports and returns None when the
+    needle matches nothing, or more than one track -- picking one of two
+    plausible takes silently would hand back the version the user meant to
+    replace.
+    """
+    needle = needle.strip()
+    if needle in entries:
+        return needle
+
+    found = [
+        key for key, entry in entries.items() if needle.lower() in entry.title.lower()
+    ]
+    if not found:
+        show(f"No cached track matching {needle!r}.")
+        return None
+    if len(found) > 1:
+        names = ", ".join(sorted(entries[key].title for key in found))
+        show(f"{needle!r} matches several tracks: {names}. Be more specific.")
+        return None
+    return found[0]
+
+
+def _no_cache(cache_path: Path, flag: str, show: Callable[..., None]) -> None:
+    show(
+        f"No cached matches in {cache_path}. Run the playlist first, then {flag} "
+        "to change what it chose."
     )
 
 
@@ -83,18 +135,13 @@ def set_matches(
     """Point cached tracks at different videos. Returns the process exit code.
 
     All or nothing: every edit is validated before any is written, so a typo in
-    the third `--set` cannot leave the cache half-updated. Titles are matched
-    case-insensitively on a substring, and an ambiguous title is an error --
-    picking one of two plausible tracks silently would be worse than failing.
+    the third `--set` cannot leave the cache half-updated.
     """
     cache_path = cache_path if cache_path is not None else cache.DEFAULT_PATH
     entries = cache.load(cache_path)
 
     if not entries:
-        show(
-            f"No cached matches in {cache_path}. Run the playlist first, then --set "
-            "to correct what it chose."
-        )
+        _no_cache(cache_path, "--set", show)
         return EXIT_FAIL
 
     edits = []
@@ -106,20 +153,11 @@ def set_matches(
             failed = True
             continue
 
-        found = [
-            key
-            for key, entry in entries.items()
-            if title.strip().lower() in entry.title.lower()
-        ]
-        if not found:
-            show(f"No cached track matching {title!r}.")
-            failed = True
-        elif len(found) > 1:
-            names = ", ".join(sorted(entries[key].title for key in found))
-            show(f"{title!r} matches several tracks: {names}. Be more specific.")
+        key = _find(title, entries, show)
+        if key is None:
             failed = True
         else:
-            edits.append((found[0], new_id))
+            edits.append((key, new_id))
 
     if failed:
         show("Nothing changed.")
@@ -136,6 +174,44 @@ def set_matches(
     return EXIT_OK
 
 
+def forget_matches(
+    needles: list[str],
+    cache_path: Path | None = None,
+    show: Callable[..., None] = print,
+) -> int:
+    """Drop cached matches so the next run resolves them again.
+
+    Takes a track title or an Apple track ID. All or nothing, like `set_matches`:
+    one unrecognised name deletes nothing.
+    """
+    cache_path = cache_path if cache_path is not None else cache.DEFAULT_PATH
+    entries = cache.load(cache_path)
+
+    if not entries:
+        _no_cache(cache_path, "--forget", show)
+        return EXIT_FAIL
+
+    keys = []
+    failed = False
+    for needle in needles:
+        key = _find(needle, entries, show)
+        if key is None:
+            failed = True
+        else:
+            keys.append(key)
+
+    if failed:
+        show("Nothing changed.")
+        return EXIT_FAIL
+
+    for key in keys:
+        gone = entries.pop(key)
+        show(f"Forgot {gone.title} — {gone.artist} ({gone.video_id})")
+
+    cache.save(entries, cache_path)
+    return EXIT_OK
+
+
 def run(
     url: str,
     *,
@@ -145,11 +221,19 @@ def run(
     directory: Path | None = None,
     open_browser: bool = False,
     set_pairs: list[list[str]] | None = None,
+    forget: list[str] | None = None,
     ask: Callable[..., str] = input,
     show: Callable[..., None] = print,
 ) -> int:
     """Resolve a playlist end to end. Returns the process exit code."""
     cache_path = cache_path if cache_path is not None else cache.DEFAULT_PATH
+
+    # Both edits land before the cache is read below, so a forgotten track is
+    # re-resolved and a --set track is used as given, all in one command.
+    if forget:
+        code = forget_matches(forget, cache_path, show=show)
+        if code != EXIT_OK:
+            return code
 
     if set_pairs:
         code = set_matches(set_pairs, cache_path, show=show)

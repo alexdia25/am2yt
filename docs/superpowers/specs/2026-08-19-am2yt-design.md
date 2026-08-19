@@ -141,6 +141,13 @@ Each module's contract:
    to replace. The stale `duration_s` is cleared, since it described the old video.
    With a playlist URL the edit is followed by a normal run so the results file and
    playlist link are rewritten in one command; without one it edits and exits.
+8. **Forgetting a match.** `--forget "<title-or-id>"` deletes a cached entry so the
+   next run resolves it again, for when no correct video is known yet and the right
+   move is to search afresh. Lookup is shared with `--set`: an exact cache key wins
+   first, so a track titled with digits cannot shadow an Apple track ID, then a
+   case-insensitive substring of the title. Same all-or-nothing validation and same
+   refusal on ambiguity. Both edits apply before the cache is read, so a single
+   command can forget one track, `--set` another, and rewrite the results file.
 
 ## CLI
 

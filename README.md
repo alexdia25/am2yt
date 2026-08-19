@@ -3,6 +3,10 @@
 Turn a public Apple Music playlist into a YouTube playlist. No login, no API
 keys, no OAuth consent screen.
 
+> Claude-created, human-reviewed. Written by Claude (Anthropic's Claude Code)
+> from a spec and plan in [docs/superpowers/](docs/superpowers/), reviewed and
+> directed by a human at every step.
+
 ## Install
 
 ```bash
@@ -48,6 +52,7 @@ YouTube to keep it on your account.
 - `--open` — open the playlist in your browser when the run finishes
 - `--no-cache` — re-resolve every track instead of reusing cached matches
 - `--set "<title>" <video>` — point a track at a different video (see below)
+- `--forget "<title-or-id>"` — drop a cached match so it's resolved again
 
 ## Fixing a bad match after the fact
 
@@ -76,8 +81,28 @@ guessed:
 Nothing changed.
 ```
 
-To re-resolve a track from scratch instead (search + prompt again), delete its
-entry from `~/.am2yt/cache.json` and rerun.
+## Re-resolving a track from scratch
+
+`--forget` drops a cached match so the next run searches for it again, by track
+title or Apple track ID:
+
+```bash
+.venv/bin/python am2yt.py --forget "Pleura"
+.venv/bin/python am2yt.py --forget 1832806846
+```
+
+Repeatable, and combines with a playlist URL to forget and rerun in one command:
+
+```bash
+.venv/bin/python am2yt.py "<playlist-url>" --forget "Pleura" --forget "Rattlesnake"
+```
+
+Same guarantees as `--set`: all-or-nothing, and an ambiguous title is refused
+rather than guessed. An exact ID always wins over a title, so a track titled
+with digits can't shadow a track ID.
+
+To wipe everything and start over, delete `~/.am2yt/cache.json`, or use
+`--no-cache` for a one-off full re-resolve.
 
 ## How it works
 

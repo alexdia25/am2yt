@@ -382,6 +382,94 @@ def test_set_reports_what_it_changed(stocked):
     assert "05s4dEcAgMI" in text
 
 
+# --- forget_matches ----------------------------------------------------------
+
+
+def test_forget_deletes_by_title(stocked):
+    assert am2yt.forget_matches(["Man I Need"], stocked, show=lambda *_: None) == 0
+    assert set(cache.load(stocked)) == {TRACK_B.apple_id}
+
+
+def test_forget_deletes_by_apple_id(stocked):
+    assert am2yt.forget_matches([TRACK_A.apple_id], stocked, show=lambda *_: None) == 0
+    assert set(cache.load(stocked)) == {TRACK_B.apple_id}
+
+
+def test_forget_matches_a_title_case_insensitively(stocked):
+    assert am2yt.forget_matches(["man i need"], stocked, show=lambda *_: None) == 0
+    assert set(cache.load(stocked)) == {TRACK_B.apple_id}
+
+
+def test_forget_matches_on_a_partial_title(stocked):
+    assert am2yt.forget_matches(["rein me"], stocked, show=lambda *_: None) == 0
+    assert set(cache.load(stocked)) == {TRACK_A.apple_id}
+
+
+def test_forget_deletes_several_at_once(stocked):
+    assert am2yt.forget_matches(
+        ["Man I Need", TRACK_B.apple_id], stocked, show=lambda *_: None
+    ) == 0
+    assert cache.load(stocked) == {}
+
+
+def test_an_id_that_looks_like_a_title_still_deletes_by_id(paths):
+    """An exact key match wins, so a numeric title cannot shadow an ID."""
+    numeric = Candidate("aaaaaaaaaaa", "1832806846", "Whoever", None, 100)
+    target = Candidate("bbbbbbbbbbb", "Pleura", "King Gizzard", None, 252)
+    cache.save({"1832806846": target, "999": numeric}, paths[0])
+
+    assert am2yt.forget_matches(["1832806846"], paths[0], show=lambda *_: None) == 0
+    assert set(cache.load(paths[0])) == {"999"}
+
+
+def test_forget_refuses_an_ambiguous_title_and_deletes_nothing(paths):
+    studio = Candidate("aaaaaaaaaaa", "Pleura", "King Gizzard", "L.W.", 252)
+    live = Candidate("bbbbbbbbbbb", "Pleura (Live)", "King Gizzard", "Live", 300)
+    cache.save({"1": studio, "2": live}, paths[0])
+
+    shown = []
+    assert am2yt.forget_matches(["Pleura"], paths[0], show=shown.append) == 1
+    assert set(cache.load(paths[0])) == {"1", "2"}
+    text = " ".join(str(line) for line in shown)
+    assert "Pleura" in text and "Pleura (Live)" in text
+
+
+def test_forget_reports_a_title_it_cannot_find(stocked):
+    shown = []
+    assert am2yt.forget_matches(["Nonexistent"], stocked, show=shown.append) == 1
+    assert any("Nonexistent" in str(line) for line in shown)
+    assert len(cache.load(stocked)) == 2
+
+
+def test_one_bad_forget_blocks_every_forget(stocked):
+    """All-or-nothing, same as --set."""
+    assert am2yt.forget_matches(
+        ["Man I Need", "Nonexistent"], stocked, show=lambda *_: None
+    ) == 1
+    assert len(cache.load(stocked)) == 2
+
+
+def test_forget_on_an_empty_cache_explains_itself(paths):
+    shown = []
+    assert am2yt.forget_matches(["Pleura"], paths[0], show=shown.append) == 1
+    assert any("cache" in str(line).lower() for line in shown)
+
+
+def test_forget_reports_what_it_deleted(stocked):
+    shown = []
+    am2yt.forget_matches(["Man I Need"], stocked, show=shown.append)
+    text = " ".join(str(line) for line in shown)
+    assert "Man I Need" in text
+    assert MATCH_A.video_id in text
+
+
+def test_forgetting_everything_leaves_a_readable_empty_cache(stocked):
+    am2yt.forget_matches(
+        ["Man I Need", "Rein Me In"], stocked, show=lambda *_: None
+    )
+    assert cache.load(stocked) == {}
+
+
 # --- --set through main ------------------------------------------------------
 
 
@@ -404,3 +492,55 @@ def test_a_failed_set_stops_the_run(fetched, paths):
     cache.save({TRACK_A.apple_id: MATCH_A}, paths[0])
     assert run(paths, set_pairs=[["Nonexistent", "05s4dEcAgMI"]]) == 1
     assert list(Path(paths[1]).glob("*.md")) == []
+
+
+def test_main_parses_repeated_forgets():
+    args = am2yt.parse_args(["--forget", "Pleura", "--forget", "1832806846"])
+    assert args.url is None
+    assert args.forget == ["Pleura", "1832806846"]
+
+
+def test_forget_without_a_url_only_edits(fetched, paths, monkeypatch):
+    cache.save({TRACK_A.apple_id: MATCH_A}, paths[0])
+    monkeypatch.setattr(am2yt.cache, "DEFAULT_PATH", paths[0])
+    assert am2yt.main(["--forget", "Man I Need"]) == 0
+    assert cache.load(paths[0]) == {}
+    assert list(Path(paths[1]).glob("*.md")) == []
+
+
+def test_forget_with_a_url_re_resolves_that_track(fetched, paths):
+    """The point of forgetting: the next run searches for it again."""
+    stale = Candidate("staleeeeeee", "Man I Need", "Olivia Dean", None, 184)
+    cache.save({TRACK_A.apple_id: stale, TRACK_B.apple_id: MATCH_B}, paths[0])
+
+    queried = []
+
+    def search(query):
+        queried.append(query)
+        return BOTH_FOUND.get(query, [])
+
+    assert run(paths, search=search, forget=["Man I Need"]) == 0
+    assert queried == ["Man I Need Olivia Dean"]
+    assert cache.load(paths[0])[TRACK_A.apple_id].video_id == MATCH_A.video_id
+    assert f"video_ids={MATCH_A.video_id},{MATCH_B.video_id}" in read_output(paths[1])
+
+
+def test_a_failed_forget_stops_the_run(fetched, paths):
+    cache.save({TRACK_A.apple_id: MATCH_A}, paths[0])
+    assert run(paths, forget=["Nonexistent"]) == 1
+    assert list(Path(paths[1]).glob("*.md")) == []
+
+
+def test_forget_and_set_can_be_combined(fetched, paths):
+    cache.save({TRACK_A.apple_id: MATCH_A, TRACK_B.apple_id: MATCH_B}, paths[0])
+    assert (
+        run(
+            paths,
+            forget=["Man I Need"],
+            set_pairs=[["Rein Me In", "05s4dEcAgMI"]],
+        )
+        == 0
+    )
+    entries = cache.load(paths[0])
+    assert entries[TRACK_A.apple_id].video_id == MATCH_A.video_id  # re-resolved
+    assert entries[TRACK_B.apple_id].video_id == "05s4dEcAgMI"  # set
